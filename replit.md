@@ -1,6 +1,6 @@
-# [Project name]
+# Rage Room
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+Rage Room is a responsive browser game where players smash breakable room objects, build combos, and fill a rage meter with tactile visual and audio feedback.
 
 ## Run & Operate
 
@@ -22,23 +22,30 @@ _Replace the heading above with the project's name, and this line with one sente
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `artifacts/rage-room/src/App.tsx` — game state, object definitions, effects, audio synthesis, and interaction logic
+- `artifacts/rage-room/src/index.css` — the visual system, responsive layout, object art, and animation effects
+- `attached_assets/rage_room_(2)_1789923571253.html` — original standalone prototype reference
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- The first build is frontend-only; game state is intentionally local because the experience is a self-contained session.
+- Breakable objects are CSS-drawn so the game stays fast, dependency-light, and visually consistent at different viewport sizes.
+- Audio is synthesized in the browser and starts only after user interaction to respect browser autoplay policies.
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+- Choose between hammer, bat, and axe tools with different damage and scoring multipliers.
+- Hit objects repeatedly until they break, with HP, cracks, debris, impact rings, score pops, screen shake, and combo banners.
+- Maintain combo momentum, fill the rage meter, add more targets, mute audio, reset the room, and play with touch or keyboard controls.
 
 ## User preferences
 
-_Populate as you build — explicit user instructions worth remembering across sessions._
+No additional preferences recorded.
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
+- Browser audio is muted until the first user gesture when autoplay restrictions apply.
+- The artifact workflow supplies `PORT` and `BASE_PATH`; use the managed workflow for preview and builds.
 
 ## Pointers
 

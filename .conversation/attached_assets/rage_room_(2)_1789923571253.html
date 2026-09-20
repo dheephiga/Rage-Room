@@ -1,0 +1,799 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>Rage Room 💥</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;touch-action:manipulation}
+body{background:#0d0d0d;overflow:hidden;font-family:system-ui,sans-serif;overscroll-behavior:none}
+#room{width:100vw;height:100dvh;position:relative;cursor:crosshair;overflow:hidden}
+#wall{position:absolute;inset:0 0 80px 0;background:radial-gradient(ellipse at 50% 20%,#2a1a1a 0%,#1a0f0f 100%)}
+#floor{position:absolute;bottom:0;left:0;right:0;height:80px;background:linear-gradient(180deg,#2d1b1b,#1a0d0d)}
+
+/* HUD */
+#hud{position:fixed;top:16px;left:50%;transform:translateX(-50%);display:flex;gap:12px;z-index:100}
+.hud-card{background:rgba(0,0,0,0.7);border:1px solid rgba(255,255,255,0.1);border-radius:10px;padding:8px 18px;text-align:center;backdrop-filter:blur(6px)}
+.hud-label{font-size:10px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:.1em}
+.hud-val{font-size:22px;font-weight:700;color:#fff;line-height:1.2}
+
+/* Rage meter */
+#rage-wrap{position:fixed;bottom:96px;left:20px;z-index:100;width:140px}
+#rage-label{font-size:11px;color:rgba(255,255,255,0.4);margin-bottom:4px;letter-spacing:.08em;text-transform:uppercase}
+#rage-bg{height:10px;background:rgba(255,255,255,0.08);border-radius:5px;overflow:hidden;border:1px solid rgba(255,255,255,0.07)}
+#rage-fill{height:100%;width:0%;background:linear-gradient(90deg,#e53935,#ff6b35,#ffd600);border-radius:5px;transition:width .25s}
+#rage-text{font-size:10px;color:rgba(255,255,255,0.3);margin-top:3px;text-align:right}
+
+/* Objects */
+.obj{position:absolute;cursor:pointer;z-index:10;transition:transform .08s;user-select:none;filter:drop-shadow(0 10px 14px rgba(0,0,0,0.55))}
+.obj:hover{transform:scale(1.06)}
+.obj.spawn-in{animation:spawn-in .4s cubic-bezier(.2,1.4,.4,1) both}
+@keyframes spawn-in{0%{transform:scale(0) rotate(-14deg);opacity:0}100%{transform:scale(1) rotate(0deg);opacity:1}}
+.shape{position:absolute;inset:0}
+.shape i{position:absolute;display:block;font-style:normal}
+
+/* Real-photo objects */
+.obj-photo{width:100%;height:100%;object-fit:cover;display:block;
+  clip-path:polygon(16% 0%,84% 0%,100% 18%,100% 82%,84% 100%,16% 100%,0% 82%,0% 18%);
+  box-shadow:inset 0 0 0 2px rgba(255,255,255,.12);background:#2a2a2a}
+.obj-photo-fallback{width:100%;height:100%;
+  clip-path:polygon(16% 0%,84% 0%,100% 18%,100% 82%,84% 100%,16% 100%,0% 82%,0% 18%);
+  display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.6);font-size:11px;text-align:center;padding:6px}
+
+/* HP bar on object */
+.obj-hp{position:absolute;bottom:-12px;left:50%;transform:translateX(-50%);height:5px;border-radius:3px;background:rgba(0,0,0,0.5);overflow:hidden}
+.obj-hp-fill{height:100%;background:linear-gradient(90deg,#e53935,#ff6b35,#4caf50);border-radius:3px;transition:width .15s}
+
+/* Damage flash */
+.obj.hit{animation:obj-hit .15s ease-out}
+@keyframes obj-hit{0%{transform:scale(1.25) rotate(-8deg)}50%{transform:scale(0.9) rotate(5deg)}100%{transform:scale(1) rotate(0deg)}}
+
+/* Crack overlay */
+.crack{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;opacity:0;transition:opacity .25s}
+.crack svg{width:100%;height:100%;overflow:visible}
+.crack path{fill:none;stroke:rgba(10,10,10,0.75);stroke-width:2.2;stroke-linecap:round}
+
+/* Piece scattering (shards) */
+.piece{position:fixed;pointer-events:none;z-index:200;animation:piece-fly var(--dur) ease-out forwards}
+@keyframes piece-fly{
+  0%  {opacity:1;transform:translate(0,0) scale(1) rotate(0deg)}
+  30% {opacity:1;transform:translate(var(--mx),var(--my)) scale(var(--ms)) rotate(var(--mr))}
+  100%{opacity:0;transform:translate(var(--ex),var(--ey)) scale(0.2) rotate(var(--er))}
+}
+.shard{position:fixed;pointer-events:none;z-index:200}
+
+/* Boom */
+.boom{position:fixed;pointer-events:none;z-index:150;transform:translate(-50%,-50%)}
+.boom-ring{position:absolute;border-radius:50%;top:50%;left:50%;transform:translate(-50%,-50%);animation:ring-out .5s ease-out forwards}
+@keyframes ring-out{0%{width:0;height:0;opacity:0.9;border-width:5px}100%{width:200px;height:200px;opacity:0;border-width:1px}}
+.boom-ring{border-style:solid}
+.boom-ring2{animation-delay:.08s}
+.boom-flash{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:90px;height:90px;border-radius:50%;animation:flash-out .35s ease-out forwards}
+@keyframes flash-out{0%{opacity:1;transform:translate(-50%,-50%) scale(0.1)}40%{opacity:0.9;transform:translate(-50%,-50%) scale(1.4)}100%{opacity:0;transform:translate(-50%,-50%) scale(2)}}
+.boom-word{position:absolute;top:50%;left:50%;font-size:26px;font-weight:900;white-space:nowrap;animation:boom-txt .7s ease-out forwards;text-shadow:0 0 12px currentColor;letter-spacing:.05em}
+@keyframes boom-txt{0%{opacity:1;transform:translate(-50%,-50%) scale(0.4)}30%{opacity:1;transform:translate(-50%,-90%) scale(1.2)}100%{opacity:0;transform:translate(-50%,-160%) scale(0.9)}}
+
+/* Score pop */
+.score-pop{position:fixed;font-size:22px;font-weight:800;pointer-events:none;z-index:160;animation:score-rise .9s ease-out forwards;text-shadow:0 2px 8px rgba(0,0,0,0.9);transform:translateX(-50%)}
+@keyframes score-rise{0%{opacity:1;top:var(--y)}100%{opacity:0;top:calc(var(--y) - 80px)}}
+.hit-num{position:fixed;font-size:15px;font-weight:700;color:#ff8a65;pointer-events:none;z-index:160;animation:score-rise .6s ease-out forwards;transform:translateX(-50%);text-shadow:0 1px 4px rgba(0,0,0,0.8)}
+
+/* Splat */
+.splat{position:fixed;pointer-events:none;border-radius:50%;opacity:0}
+.splat.show{animation:splat-in .4s ease-out forwards}
+@keyframes splat-in{0%{transform:scale(0);opacity:0}60%{opacity:0.45;transform:scale(1.1)}100%{opacity:0.3;transform:scale(1)}}
+
+/* Toolbar */
+#toolbar{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);display:flex;gap:10px;z-index:100}
+.tbtn{background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.12);border-radius:10px;color:rgba(255,255,255,0.7);padding:8px 16px;font-size:13px;cursor:pointer;transition:all .15s;white-space:nowrap}
+.tbtn:hover{background:rgba(255,100,60,0.25);border-color:rgba(255,100,60,0.5);color:#fff}
+.tbtn.active{background:rgba(255,100,60,0.35);border-color:#ff6b35;color:#fff;box-shadow:0 0 12px rgba(255,107,53,.3)}
+#spawn-btn{position:fixed;bottom:24px;right:20px;z-index:100}
+#mute-btn{position:fixed;top:16px;right:20px;z-index:100;background:rgba(0,0,0,0.5);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:7px 12px;color:rgba(255,255,255,0.6);cursor:pointer;font-size:14px}
+
+/* Screen shake */
+@keyframes shake{0%,100%{transform:translate(0,0)}15%{transform:translate(-7px,4px)}30%{transform:translate(7px,-4px)}45%{transform:translate(-5px,6px)}60%{transform:translate(5px,-3px)}75%{transform:translate(-3px,3px)}90%{transform:translate(2px,-2px)}}
+#room.shake{animation:shake .3s ease-out}
+
+/* Weapon swing */
+.weapon-swing{position:fixed;pointer-events:none;z-index:180;font-size:72px;line-height:1;transform-origin:bottom right}
+.weapon-swing.hammer{animation:swing-hammer .25s cubic-bezier(.2,0,.4,1) forwards}
+.weapon-swing.bat{animation:swing-bat .22s cubic-bezier(.15,0,.35,1) forwards}
+.weapon-swing.axe{animation:swing-axe .2s cubic-bezier(.1,0,.3,1) forwards}
+@keyframes swing-hammer{
+  0%  {opacity:1;transform:translate(-20px,-80px) rotate(-120deg) scale(1.2)}
+  55% {opacity:1;transform:translate(10px,10px) rotate(-20deg) scale(1.1)}
+  75% {opacity:1;transform:translate(5px,5px) rotate(-10deg) scale(0.95)}
+  100%{opacity:0;transform:translate(0,0) rotate(0deg) scale(0.8)}
+}
+@keyframes swing-bat{
+  0%  {opacity:1;transform:translate(80px,-60px) rotate(60deg) scale(1.2)}
+  55% {opacity:1;transform:translate(-10px,8px) rotate(-10deg) scale(1.1)}
+  75% {opacity:1;transform:translate(-5px,4px) rotate(-5deg) scale(0.95)}
+  100%{opacity:0;transform:translate(0,0) rotate(0deg) scale(0.8)}
+}
+@keyframes swing-axe{
+  0%  {opacity:1;transform:translate(-30px,-100px) rotate(-150deg) scale(1.4)}
+  50% {opacity:1;transform:translate(8px,8px) rotate(-15deg) scale(1.2)}
+  70% {opacity:1;transform:translate(4px,4px) rotate(-8deg) scale(1)}
+  100%{opacity:0;transform:translate(0,0) rotate(0deg) scale(0.85)}
+}
+
+/* Combo banner */
+#combo-banner{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);font-size:0;font-weight:900;color:#ffd600;z-index:200;pointer-events:none;text-shadow:0 0 30px #ffd600,0 0 60px #ff6b35;letter-spacing:.05em;text-transform:uppercase;font-family:system-ui,sans-serif}
+#combo-banner.pop{animation:banner-pop .9s ease-out forwards}
+@keyframes banner-pop{0%{font-size:0;opacity:1}30%{font-size:52px;opacity:1}70%{font-size:48px;opacity:1}100%{font-size:48px;opacity:0;transform:translate(-50%,-120%)}}
+
+/* ── Object shapes (realistic-ish, CSS-drawn) ──────────────────────────── */
+/* vase / urn — ceramic */
+.type-vase .p1{width:66%;height:62%;left:17%;top:24%;border-radius:50% 50% 45% 45%/62% 62% 30% 30%;background:linear-gradient(120deg,#e2a86f 0%,#c17a3d 45%,#7a4620 100%);box-shadow:inset -14px -10px 22px rgba(0,0,0,.35),inset 10px 8px 16px rgba(255,255,255,.18)}
+.type-vase .p2{width:26%;height:16%;left:37%;top:8%;border-radius:40% 40% 8% 8%;background:linear-gradient(120deg,#e8b57e,#8a5225)}
+.type-vase .p3{width:44%;height:7%;left:28%;bottom:4%;border-radius:50%;background:radial-gradient(ellipse,rgba(0,0,0,.4),transparent 70%)}
+
+/* wine glass — glass */
+.type-wineglass .p1{width:64%;height:44%;left:18%;top:6%;border-radius:50% 50% 45% 45%/68% 68% 20% 20%;background:linear-gradient(160deg,rgba(255,255,255,.42),rgba(200,225,235,.16) 60%,rgba(160,195,210,.28));box-shadow:inset -6px -4px 10px rgba(255,255,255,.35),inset 4px 6px 12px rgba(60,90,110,.25);border:1px solid rgba(255,255,255,.3)}
+.type-wineglass .p2{width:7%;height:34%;left:46.5%;top:48%;background:linear-gradient(90deg,rgba(255,255,255,.5),rgba(200,220,230,.2))}
+.type-wineglass .p3{width:42%;height:6%;left:29%;bottom:2%;border-radius:50%;background:linear-gradient(90deg,rgba(255,255,255,.5),rgba(200,220,230,.25))}
+
+/* mug — ceramic */
+.type-mug .p1{width:60%;height:56%;left:16%;top:22%;border-radius:12% 12% 20% 20%;background:linear-gradient(120deg,#f0ece0,#c9c2ae 70%);box-shadow:inset -8px -6px 14px rgba(0,0,0,.2),inset 6px 6px 10px rgba(255,255,255,.4)}
+.type-mug .p2{width:22%;height:30%;right:10%;top:34%;border:7% solid #c9c2ae;border-left:none;border-radius:0 50% 50% 0;background:transparent}
+.type-mug .p3{width:60%;height:10%;left:16%;top:18%;border-radius:50%;background:linear-gradient(180deg,#4a6fa5,#7695c2)}
+
+/* tv — electronic */
+.type-tv .p1{width:92%;height:74%;left:4%;top:4%;border-radius:6%;background:linear-gradient(160deg,#2a2a2e,#0e0e10);box-shadow:inset 0 0 0 3px rgba(255,255,255,.05)}
+.type-tv .p2{width:82%;height:60%;left:9%;top:11%;border-radius:3%;background:linear-gradient(150deg,#173a5e,#0a1220 70%);box-shadow:inset 0 0 20px rgba(80,160,255,.25)}
+.type-tv .p3{width:26%;height:6%;left:37%;bottom:2%;border-radius:0 0 30% 30%;background:#1a1a1c}
+
+/* laptop — electronic */
+.type-laptop .p1{width:88%;height:54%;left:6%;top:2%;border-radius:6% 6% 2% 2%;background:linear-gradient(150deg,#20242c,#0a0d12);box-shadow:inset 0 0 0 2px rgba(255,255,255,.05)}
+.type-laptop .p2{width:76%;height:44%;left:12%;top:7%;border-radius:3%;background:linear-gradient(160deg,#1c3d63,#081018 75%);box-shadow:inset 0 0 16px rgba(70,150,255,.2)}
+.type-laptop .p3{width:96%;height:44%;left:2%;bottom:0;border-radius:0 0 10% 10%;background:linear-gradient(180deg,#c3c7cf,#8a8f99)}
+.type-laptop .p4{width:70%;height:22%;left:15%;bottom:14%;background:repeating-linear-gradient(90deg,#6d727c 0 6%,transparent 6% 9%);opacity:.6}
+
+/* window — glass */
+.type-window .p1{width:100%;height:100%;background:#6b4b2f;border-radius:4%}
+.type-window .p2{width:44%;height:44%;left:4%;top:4%;background:linear-gradient(135deg,rgba(255,255,255,.35),rgba(180,215,230,.18) 60%,rgba(140,190,210,.28));box-shadow:inset 0 0 12px rgba(255,255,255,.25)}
+.type-window .p3{width:44%;height:44%;left:52%;top:4%;background:linear-gradient(135deg,rgba(255,255,255,.3),rgba(180,215,230,.16) 60%,rgba(140,190,210,.26))}
+.type-window .p4{width:44%;height:44%;left:4%;top:52%;background:linear-gradient(135deg,rgba(255,255,255,.28),rgba(180,215,230,.15) 60%,rgba(140,190,210,.24))}
+.type-window .p5{width:44%;height:44%;left:52%;top:52%;background:linear-gradient(135deg,rgba(255,255,255,.32),rgba(180,215,230,.17) 60%,rgba(140,190,210,.27))}
+
+/* guitar — wood */
+.type-guitar .p1{width:56%;height:40%;left:22%;top:44%;border-radius:50%;background:radial-gradient(circle at 35% 30%,#e0a256,#8a4a1e 75%)}
+.type-guitar .p2{width:70%;height:32%;left:15%;top:60%;border-radius:50%;background:radial-gradient(circle at 35% 35%,#d99a4e,#7a3f18 75%)}
+.type-guitar .p3{width:12%;height:56%;left:44%;top:0;background:linear-gradient(90deg,#5c3416,#3a2110)}
+.type-guitar .p4{width:14%;height:14%;left:43%;top:66%;border-radius:50%;background:radial-gradient(circle,#1a0f08,#3a2110)}
+
+/* chair — wood */
+.type-chair .p1{width:60%;height:34%;left:20%;top:38%;background:linear-gradient(160deg,#a5733f,#6b4423)}
+.type-chair .p2{width:56%;height:36%;left:22%;top:2%;background:repeating-linear-gradient(90deg,#8a5a2e 0 12%,#6b4423 12% 18%)}
+.type-chair .p3{width:8%;height:28%;left:22%;bottom:0;background:linear-gradient(180deg,#7a5029,#4a2f16)}
+.type-chair .p4{width:8%;height:28%;right:22%;bottom:0;background:linear-gradient(180deg,#7a5029,#4a2f16)}
+
+/* painting — wood + canvas */
+.type-painting .p1{width:100%;height:100%;background:linear-gradient(160deg,#c99a3f,#7a5a1e);border-radius:2%}
+.type-painting .p2{width:80%;height:78%;left:10%;top:11%;background:radial-gradient(circle at 30% 30%,#ff8a65,#5c4bb0 55%,#1b1b3a 100%)}
+
+/* trophy — metal */
+.type-trophy .p1{width:56%;height:38%;left:22%;top:4%;clip-path:polygon(0% 0%,100% 0%,80% 100%,20% 100%);background:linear-gradient(120deg,#fff2b0,#d4a017 55%,#8a6a10)}
+.type-trophy .p2{width:10%;height:24%;left:45%;top:38%;background:linear-gradient(180deg,#f0cf5a,#a8790f)}
+.type-trophy .p3{width:44%;height:12%;left:28%;bottom:4%;border-radius:6%;background:linear-gradient(120deg,#f0cf5a,#8a6a10)}
+
+/* lamp — glass shade + metal */
+.type-lamp .p1{width:66%;height:38%;left:17%;top:2%;clip-path:polygon(30% 0%,70% 0%,100% 100%,0% 100%);background:radial-gradient(circle at 50% 30%,#fff3cf,#ffb74d 70%);box-shadow:0 0 22px rgba(255,190,80,.5)}
+.type-lamp .p2{width:6%;height:44%;left:47%;top:38%;background:linear-gradient(90deg,#8a8a8a,#4a4a4a)}
+.type-lamp .p3{width:40%;height:8%;left:30%;bottom:2%;border-radius:50%;background:linear-gradient(90deg,#6a6a6a,#3a3a3a)}
+
+/* plant — ceramic pot + leaves */
+.type-plant .p1{width:52%;height:34%;left:24%;bottom:2%;clip-path:polygon(10% 0%,90% 0%,100% 100%,0% 100%);background:linear-gradient(160deg,#c17a3d,#7a4620)}
+.type-plant .p2{width:14%;height:44%;left:26%;top:8%;border-radius:60% 60% 60% 0;background:linear-gradient(160deg,#5fae5f,#2f7a3a);transform:rotate(-25deg)}
+.type-plant .p3{width:14%;height:44%;left:44%;top:0;border-radius:60% 60% 60% 60%;background:linear-gradient(160deg,#6fc06f,#3a8a45)}
+.type-plant .p4{width:14%;height:40%;left:60%;top:10%;border-radius:60% 60% 0 60%;background:linear-gradient(160deg,#5fae5f,#2f7a3a);transform:rotate(25deg)}
+
+/* clock — wood + metal */
+.type-clock .p1{width:84%;height:84%;left:8%;top:8%;border-radius:50%;background:radial-gradient(circle,#f2e8d0,#c9b98a 85%);box-shadow:inset 0 0 0 6% #6b4226}
+.type-clock .p2{width:5%;height:26%;left:47.5%;top:26%;background:#2a2a2a;transform-origin:bottom center;transform:rotate(35deg)}
+.type-clock .p3{width:4%;height:34%;left:48%;top:18%;background:#2a2a2a;transform-origin:bottom center;transform:rotate(-70deg)}
+.type-clock .p4{width:10%;height:10%;left:45%;top:45%;border-radius:50%;background:#1a1a1a}
+
+/* crystal — glass gem */
+.type-crystal .p1{width:70%;height:80%;left:15%;top:10%;clip-path:polygon(50% 0%,100% 35%,80% 100%,20% 100%,0% 35%);background:linear-gradient(160deg,#c98bff,#6a3fd6 55%,#3a1f8a);box-shadow:0 0 20px rgba(150,90,255,.45)}
+.type-crystal .p2{width:26%;height:30%;left:38%;top:14%;clip-path:polygon(50% 0%,100% 40%,70% 100%,30% 100%,0% 40%);background:rgba(255,255,255,.4)}
+
+/* ice cube — ice */
+.type-icecube .p1{width:70%;height:60%;left:15%;top:8%;background:linear-gradient(160deg,#eaf9ff,#bfe9f5);clip-path:polygon(20% 0%,100% 12%,80% 100%,0% 88%)}
+.type-icecube .p2{width:70%;height:32%;left:15%;top:8%;background:linear-gradient(160deg,rgba(255,255,255,.7),rgba(255,255,255,.1));clip-path:polygon(20% 0%,100% 12%,100% 40%,20% 30%)}
+.type-icecube .p3{width:70%;height:60%;left:15%;top:32%;background:linear-gradient(200deg,#9fd8ec,#6fb9d4);clip-path:polygon(0% 20%,80% 0%,80% 68%,0% 88%);opacity:.7}
+
+/* Responsive tweaks */
+@media (max-width: 600px){
+  #hud{gap:6px;top:8px}
+  .hud-card{padding:5px 10px;border-radius:8px}
+  .hud-label{font-size:8px}
+  .hud-val{font-size:16px}
+  #rage-wrap{bottom:78px;left:10px;width:100px}
+  #rage-label{font-size:9px}
+  #toolbar{bottom:14px;gap:6px;flex-wrap:wrap;justify-content:center;width:94%;left:50%}
+  .tbtn{padding:7px 11px;font-size:11px;border-radius:8px}
+  #spawn-btn{position:static}
+  #mute-btn{top:8px;right:10px;padding:6px 9px;font-size:12px}
+  .boom-word{font-size:18px}
+  #combo-banner.pop{animation-name:banner-pop-mobile}
+  .score-pop{font-size:16px}
+  .hit-num{font-size:12px}
+  .weapon-swing{font-size:48px}
+}
+@keyframes banner-pop-mobile{0%{font-size:0;opacity:1}30%{font-size:30px;opacity:1}70%{font-size:28px;opacity:1}100%{font-size:28px;opacity:0;transform:translate(-50%,-120%)}}
+
+@media (min-width: 601px) and (max-width: 1024px){
+  .hud-val{font-size:19px}
+  #toolbar{bottom:18px}
+}
+</style>
+</head>
+<body>
+<div id="room">
+  <div id="wall"></div>
+  <div id="floor"></div>
+</div>
+
+<div id="hud">
+  <div class="hud-card"><div class="hud-label">Score</div><div class="hud-val" id="score-val">0</div></div>
+  <div class="hud-card"><div class="hud-label">Smashed</div><div class="hud-val" id="smashed-val">0</div></div>
+  <div class="hud-card"><div class="hud-label">Combo</div><div class="hud-val" id="combo-val">x1</div></div>
+</div>
+
+<div id="rage-wrap">
+  <div id="rage-label">Rage</div>
+  <div id="rage-bg"><div id="rage-fill"></div></div>
+  <div id="rage-text">0%</div>
+</div>
+
+<div id="combo-banner"></div>
+
+<div id="toolbar">
+  <button class="tbtn active" data-tool="hammer">🔨 Hammer</button>
+  <button class="tbtn" data-tool="bat">⚾ Bat</button>
+  <button class="tbtn" data-tool="axe">🪓 Axe</button>
+  <button class="tbtn" id="spawn-btn">+ More stuff</button>
+</div>
+<button id="mute-btn">🔊</button>
+
+<script>
+// ── Audio: material-based synthesis ─────────────────────────────────────
+let audioCtx=null, muted=false;
+function getCtx(){
+  if(!audioCtx) audioCtx=new(window.AudioContext||window.webkitAudioContext)();
+  if(audioCtx.state==='suspended') audioCtx.resume();
+  return audioCtx;
+}
+function noiseBuffer(ctx,dur,shape){
+  const buf=ctx.createBuffer(1,Math.max(1,ctx.sampleRate*dur),ctx.sampleRate);
+  const d=buf.getChannelData(0);
+  for(let i=0;i<d.length;i++) d[i]=(Math.random()*2-1)*Math.pow(1-i/d.length,shape||1.4);
+  return buf;
+}
+function noiseBurst(ctx,t,dur,filterType,freq,q,gainVal,shape){
+  const src=ctx.createBufferSource(); src.buffer=noiseBuffer(ctx,dur,shape);
+  const filt=ctx.createBiquadFilter(); filt.type=filterType; filt.frequency.value=freq; if(q) filt.Q.value=q;
+  const g=ctx.createGain(); g.gain.setValueAtTime(gainVal,t); g.gain.exponentialRampToValueAtTime(0.001,t+dur);
+  src.connect(filt);filt.connect(g);g.connect(ctx.destination);
+  src.start(t);src.stop(t+dur+0.02);
+}
+function tone(ctx,t,freq,freqEnd,dur,gainVal,type){
+  const o=ctx.createOscillator(), g=ctx.createGain();
+  o.type=type||'sine';
+  o.frequency.setValueAtTime(freq,t);
+  if(freqEnd) o.frequency.exponentialRampToValueAtTime(freqEnd,t+dur);
+  g.gain.setValueAtTime(gainVal,t); g.gain.exponentialRampToValueAtTime(0.001,t+dur);
+  o.connect(g);g.connect(ctx.destination);
+  o.start(t);o.stop(t+dur+0.02);
+}
+
+// -- per-material hit sounds (light, on every non-lethal hit) --
+function hitSound(material){
+  if(muted) return;
+  const ctx=getCtx(), t=ctx.currentTime;
+  switch(material){
+    case 'glass':
+      [1600,2200,3000].forEach((f,i)=>tone(ctx,t+i*0.01,f+Math.random()*150,null,0.18,0.05,'sine'));
+      noiseBurst(ctx,t,0.05,'highpass',2500,1,0.25,1.2);
+      break;
+    case 'ceramic':
+      tone(ctx,t,340,140,0.12,0.5,'triangle');
+      noiseBurst(ctx,t,0.06,'bandpass',1800,3,0.2,1.6);
+      break;
+    case 'wood':
+      tone(ctx,t,150,70,0.1,0.5,'sine');
+      noiseBurst(ctx,t,0.08,'bandpass',450,2,0.28,1.5);
+      break;
+    case 'metal':
+      [520,780,1040].forEach((f,i)=>tone(ctx,t+i*0.005,f,f*0.9,0.3,0.14,'triangle'));
+      noiseBurst(ctx,t,0.04,'highpass',3000,1,0.2,1);
+      break;
+    case 'electronic':
+      noiseBurst(ctx,t,0.05,'bandpass',1200,4,0.3,1.3);
+      tone(ctx,t,900,120,0.08,0.2,'square');
+      break;
+    case 'ice':
+      [2000,2600,3400].forEach((f,i)=>tone(ctx,t+i*0.008,f,null,0.1,0.12,'sine'));
+      noiseBurst(ctx,t,0.04,'highpass',3500,1,0.22,1);
+      break;
+    case 'stone':
+      tone(ctx,t,90,55,0.14,0.55,'sine');
+      noiseBurst(ctx,t,0.1,'bandpass',600,1.2,0.3,1.6);
+      break;
+    default:
+      noiseBurst(ctx,t,0.08,'lowpass',900,1,0.3,1.3);
+  }
+}
+
+// -- per-material break sounds (heavier, on destroy) --
+function breakSound(material){
+  if(muted) return;
+  const ctx=getCtx(), t=ctx.currentTime;
+  switch(material){
+    case 'glass':
+      [900,1350,1800,2700,3600,4200].forEach((f,i)=>tone(ctx,t+i*0.014,f+Math.random()*200,null,0.55+i*0.03,0.13,'sine'));
+      noiseBurst(ctx,t,0.3,'highpass',2200,1,0.35,1.3);
+      break;
+    case 'ceramic':
+      tone(ctx,t,240,80,0.22,0.7,'triangle');
+      noiseBurst(ctx,t,0.28,'bandpass',1500,2.5,0.5,1.4);
+      noiseBurst(ctx,t+0.05,0.18,'highpass',3000,1,0.25,1.6);
+      break;
+    case 'wood':
+      tone(ctx,t,110,45,0.3,0.7,'sine');
+      noiseBurst(ctx,t,0.32,'bandpass',380,1.8,0.55,1.3);
+      noiseBurst(ctx,t+0.06,0.2,'bandpass',900,2,0.2,1.5);
+      break;
+    case 'metal':
+      [220,330,440,660].forEach((f,i)=>tone(ctx,t+i*0.01,f,f*0.7,0.9+i*0.15,0.2,'triangle'));
+      noiseBurst(ctx,t,0.12,'highpass',2500,1,0.4,1);
+      break;
+    case 'electronic':
+      noiseBurst(ctx,t,0.22,'bandpass',1400,3,0.5,1.2);
+      for(let i=0;i<5;i++) tone(ctx,t+i*0.035,600-i*90,80,0.06,0.18,'square');
+      break;
+    case 'ice':
+      [2200,2800,3600,4400].forEach((f,i)=>tone(ctx,t+i*0.012,f,null,0.4,0.15,'sine'));
+      noiseBurst(ctx,t,0.25,'highpass',3200,1,0.3,1.2);
+      break;
+    case 'stone':
+      tone(ctx,t,75,35,0.35,0.75,'sine');
+      noiseBurst(ctx,t,0.36,'bandpass',500,1.1,0.6,1.2);
+      noiseBurst(ctx,t+0.05,0.24,'lowpass',300,1,0.35,1.4);
+      break;
+    default:
+      noiseBurst(ctx,t,0.3,'lowpass',900,1,0.5,1.3);
+  }
+}
+function playCombo(lvl){
+  if(muted) return;
+  const ctx=getCtx(), t=ctx.currentTime;
+  [220,330,440,550,660,880].slice(0,Math.min(lvl,6)).forEach((f,i)=>tone(ctx,t+i*0.07,f,null,0.2+i*0.07,0.07,'square'));
+}
+function playRage(){
+  if(muted) return;
+  const ctx=getCtx();
+  for(let i=0;i<4;i++) setTimeout(()=>tone(getCtx(),getCtx().currentTime,80+i*25,180+i*35,0.18,0.25,'sawtooth'),i*90);
+}
+function playAmbientTap(){
+  if(muted) return;
+  const ctx=getCtx(), t=ctx.currentTime;
+  noiseBurst(ctx,t,0.12,'lowpass',700,1,0.25,1.3);
+}
+
+// ── Object definitions ────────────────────────────────────────────────────
+// material drives sound + shard color palette. w/h are the base render size (px at scale 1).
+const WIKI = 'https://commons.wikimedia.org/wiki/Special:FilePath/';
+const OBJECTS = [
+  {type:'vase',     label:'vase',       hp:2, pts:15, w:100, h:120, material:'ceramic',   shards:['#8a5225','#e2a86f','#5c3416']},
+  {type:'wineglass',label:'wine glass', hp:1, pts:12, w:90,  h:130, material:'glass',     shards:['#dbe8f0','#ffffff','#b8d4e0'],
+   photo:WIKI+'Glass_wine_white_background.jpg'},
+  {type:'mug',      label:'mug',        hp:2, pts:10, w:100, h:100, material:'ceramic',   shards:['#e8e4d8','#4a6fa5','#c9c2ae']},
+  {type:'tv',       label:'TV',         hp:5, pts:70, w:170, h:130, material:'electronic',shards:['#1a1a1c','#173a5e','#333333'],
+   photo:WIKI+'Old_TV.jpg'},
+  {type:'laptop',   label:'laptop',     hp:4, pts:60, w:150, h:110, material:'electronic',shards:['#b8bcc4','#1c3d63','#6b7078']},
+  {type:'phone',    label:'phone',      hp:3, pts:50, w:70,  h:130, material:'electronic',shards:['#1c1c1e','#3a3a3c','#0a84ff']},
+  {type:'window',   label:'window',     hp:3, pts:35, w:150, h:150, material:'glass',     shards:['#cfe8f0','#ffffff','#8cbed2']},
+  {type:'guitar',   label:'guitar',     hp:4, pts:75, w:130, h:180, material:'wood',      shards:['#c17a3d','#8a4a1e','#5c2e0e'],
+   photo:WIKI+'Classical_Guitar.jpg'},
+  {type:'chair',    label:'chair',      hp:4, pts:30, w:120, h:150, material:'wood',      shards:['#7a4a28','#a5733f','#4a2f16']},
+  {type:'painting', label:'painting',   hp:3, pts:40, w:140, h:110, material:'wood',      shards:['#c99a3f','#ff8a65','#5c4bb0']},
+  {type:'trophy',   label:'trophy',     hp:3, pts:50, w:90,  h:140, material:'metal',     shards:['#f0cf5a','#d4a017','#8a6a10']},
+  {type:'lamp',     label:'lamp',       hp:2, pts:14, w:110, h:150, material:'glass',     shards:['#ffb74d','#fff3cf','#6a6a6a']},
+  {type:'plant',    label:'plant',      hp:3, pts:18, w:120, h:140, material:'ceramic',   shards:['#c17a3d','#5fae5f','#2f7a3a']},
+  {type:'clock',    label:'clock',      hp:4, pts:45, w:120, h:120, material:'wood',      shards:['#c9b98a','#6b4226','#2a2a2a']},
+  {type:'crystal',  label:'crystal',    hp:2, pts:65, w:100, h:120, material:'glass',     shards:['#c98bff','#6a3fd6','#ffffff']},
+  {type:'icecube',  label:'ice block',  hp:2, pts:8,  w:110, h:110, material:'ice',       shards:['#eaf9ff','#bfe9f5','#6fb9d4']},
+  {type:'rock',     label:'rock',       hp:6, pts:20, w:120, h:100, material:'stone',     shards:['#8a8378','#5c574e','#3a372f'],
+   photo:WIKI+'Immense_Rock.jpg'},
+];
+const PARTS_BY_TYPE = {
+  vase:3, wineglass:3, mug:3, tv:3, laptop:4, phone:0, window:5,
+  guitar:4, chair:4, painting:2, trophy:3, lamp:3, plant:4, clock:4, crystal:2, icecube:3
+};
+// phone reuses laptop-style screen via inline generation
+PARTS_BY_TYPE.phone = 3;
+
+const TOOLS = {
+  hammer:{mult:1,   dmg:1,   boomColor:'#ff6b35', word:'SMASH!',  big:false},
+  bat:   {mult:1.5, dmg:1,   boomColor:'#00d4ff', word:'CRACK!',  big:false},
+  axe:   {mult:2.5, dmg:2,   boomColor:'#ff1744', word:'DESTROY!',big:true}
+};
+
+let score=0, smashed=0, combo=1, rage=0, currentTool='hammer', comboTimer=null, refillTimer=null;
+const room = document.getElementById('room');
+
+// ── Responsive scale ──────────────────────────────────────────────────────
+function getScale(){
+  const W = window.innerWidth;
+  if (W < 420) return 0.55;
+  if (W < 600) return 0.65;
+  if (W < 900) return 0.8;
+  return 1;
+}
+function getTopClearance(){ return window.innerWidth < 600 ? 50 : 60; }
+function getBottomClearance(){ return window.innerWidth < 600 ? 130 : 170; }
+
+// ── Build a crack overlay SVG (jagged fracture lines), hidden until damaged ──
+function buildCrackPaths(seed){
+  const rnd=(a,b)=>a+Math.sin(seed*99+a*7+b*3)*0.5*(b-a)+ (b-a)/2*0; // deterministic-ish jitter fallback
+  function rand(){ seed = (seed*9301+49297)%233280; return seed/233280; }
+  let paths='';
+  for(let i=0;i<3;i++){
+    let x=40+rand()*20, y=40+rand()*20, d=`M${x},${y}`;
+    for(let s=0;s<4;s++){
+      x += (rand()-0.5)*36;
+      y += (rand()-0.5)*36;
+      d+=` L${x},${y}`;
+    }
+    paths+=`<path d="${d}"/>`;
+  }
+  return paths;
+}
+
+// ── Spawn object ──────────────────────────────────────────────────────────
+function spawnObject(def, animate){
+  const W=window.innerWidth, H=window.innerHeight;
+  const scale = getScale();
+  const w = def.w*scale, h=def.h*scale;
+  const el=document.createElement('div');
+  el.className='obj'+(animate?' spawn-in':'');
+  el.style.width=w+'px';
+  el.style.height=h+'px';
+  const topClear = getTopClearance();
+  const botClear = getBottomClearance();
+  const x = 20 + Math.random()*Math.max(20, W-w-40);
+  const y = topClear + Math.random()*Math.max(20, H-h-topClear-botClear);
+  el.style.left=x+'px';
+  el.style.top=y+'px';
+
+  if(def.photo){
+    const img=document.createElement('img');
+    img.className='obj-photo';
+    img.src=def.photo;
+    img.alt=def.label;
+    img.draggable=false;
+    img.onerror=()=>{
+      const fb=document.createElement('div');
+      fb.className='obj-photo-fallback';
+      fb.style.background=`linear-gradient(160deg,${def.shards[0]},${def.shards[2]})`;
+      fb.textContent=def.label;
+      img.replaceWith(fb);
+    };
+    el.appendChild(img);
+  } else {
+    const shape=document.createElement('div');
+    shape.className='shape type-'+def.type;
+    const nParts=PARTS_BY_TYPE[def.type]||3;
+    for(let i=1;i<=nParts;i++){
+      const part=document.createElement('i');
+      part.className='p'+i;
+      shape.appendChild(part);
+    }
+    el.appendChild(shape);
+  }
+
+  // crack overlay
+  const crack=document.createElement('div');
+  crack.className='crack';
+  crack.innerHTML=`<svg viewBox="0 0 100 100" preserveAspectRatio="none">${buildCrackPaths(Math.floor(Math.random()*10000)+1)}</svg>`;
+  el.appendChild(crack);
+
+  // HP bar
+  const hpWrap=document.createElement('div');
+  hpWrap.className='obj-hp';
+  hpWrap.style.width=(w*0.7)+'px';
+  const hpFill=document.createElement('div');
+  hpFill.className='obj-hp-fill';
+  hpFill.style.width='100%';
+  hpWrap.appendChild(hpFill);
+  el.appendChild(hpWrap);
+
+  let hp=def.hp;
+  el.dataset.hp=hp;
+  el.dataset.maxhp=def.hp;
+
+  el.addEventListener('click', ev=>{
+    ev.stopPropagation();
+    hitObject(el,def,crack,hpFill,x+w/2,y+h/2,w,h);
+  });
+
+  room.appendChild(el);
+}
+function spawnBatch(n, stagger){
+  const picks=[];
+  for(let i=0;i<n;i++) picks.push(OBJECTS[Math.floor(Math.random()*OBJECTS.length)]);
+  picks.forEach((def,i)=>setTimeout(()=>spawnObject(def,true), stagger? i*90 : 0));
+}
+
+// ── Weapon swing ─────────────────────────────────────────────────────────
+const WEAPON_EMOJI = {hammer:'🔨', bat:'🪃', axe:'🪓'};
+function spawnWeaponSwing(cx, cy, toolName){
+  const el = document.createElement('div');
+  el.className = 'weapon-swing ' + toolName;
+  el.textContent = WEAPON_EMOJI[toolName];
+  el.style.left = (cx - 36) + 'px';
+  el.style.top  = (cy - 36) + 'px';
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 350);
+}
+
+// ── Hit object ────────────────────────────────────────────────────────────
+function hitObject(el, def, crack, hpFill, cx, cy, objW, objH){
+  const tool=TOOLS[currentTool];
+  spawnWeaponSwing(cx, cy, currentTool);
+  let hp=parseInt(el.dataset.hp);
+  const maxhp=parseInt(el.dataset.maxhp);
+  hp-=tool.dmg;
+  el.dataset.hp=hp;
+
+  const hpPct=Math.max(0,hp/maxhp)*100;
+  hpFill.style.width=hpPct+'%';
+
+  hitSound(def.material);
+
+  el.classList.remove('hit');
+  void el.offsetWidth;
+  el.classList.add('hit');
+
+  const dmgRatio=1-(hp/maxhp);
+  crack.style.opacity=Math.min(1,dmgRatio*1.3);
+
+  const shardCount=1+Math.round(dmgRatio*3);
+  scatterShards(def, cx, cy, false, shardCount, objW, objH);
+
+  spawnBoom(cx, cy, tool, hp<=0);
+  spawnHitNum(cx, cy, hp, maxhp);
+
+  if(hp<=0){
+    destroyObject(el, def, cx, cy, objW, objH);
+  }
+}
+
+// ── Destroy object ────────────────────────────────────────────────────────
+function destroyObject(el, def, cx, cy, objW, objH){
+  const tool=TOOLS[currentTool];
+  breakSound(def.material);
+
+  scatterShards(def, cx, cy, true, 12, objW, objH);
+
+  el.remove();
+  spawnSplat(cx, cy, true);
+
+  const pts=Math.round(def.pts * TOOLS[currentTool].mult * combo);
+  score+=pts; smashed++; rage=Math.min(100,rage+pts/3);
+  combo=Math.min(10,combo+1);
+  clearTimeout(comboTimer);
+  comboTimer=setTimeout(()=>{combo=1;updateHUD();},2200);
+  updateHUD();
+
+  spawnScorePop(cx,cy,pts,tool.boomColor);
+  if(combo>=3) showComboBanner();
+  if(combo>=5){playCombo(combo);triggerShake();}
+  if(rage>=100) triggerRageBurst();
+
+  checkRefill();
+}
+
+// ── Auto-refill when the room starts emptying out ─────────────────────────
+function checkRefill(){
+  const remaining = room.querySelectorAll('.obj').length;
+  clearTimeout(refillTimer);
+  if(remaining===0){
+    refillTimer=setTimeout(()=>{
+      const n = window.innerWidth<600?5:window.innerWidth<900?6:8;
+      spawnBatch(n,true);
+    }, 300);
+  } else if(remaining<=2){
+    refillTimer=setTimeout(()=>{
+      if(room.querySelectorAll('.obj').length<=2) spawnBatch(1+Math.floor(Math.random()*2),true);
+    }, 600+Math.random()*500);
+  }
+}
+
+// ── Shard scatter ───────────────────────────────────────────────────────
+// Real-photo objects shatter into cropped tiles of their own image (so a TV
+// breaks into pieces that still look like a TV); CSS-shape objects scatter
+// colored polygon chips matching their material palette.
+function scatterShards(def, cx, cy, explosive, count, objW, objH){
+  const colors=def.shards;
+  const grid=4;
+  for(let i=0;i<count;i++){
+    const el=document.createElement('div');
+    const sides=3+Math.floor(Math.random()*2);
+    const clip = sides===3
+      ? 'polygon(50% 0%, 100% 100%, 0% 100%)'
+      : 'polygon(50% 0%, 100% 38%, 82% 100%, 18% 100%, 0% 38%)';
+    el.className='shard';
+
+    if(def.photo){
+      const cellW=objW/grid, cellH=objH/grid;
+      const col=Math.floor(Math.random()*grid), row=Math.floor(Math.random()*grid);
+      const sz=(explosive?1.15:0.9)*Math.max(cellW,cellH);
+      el.style.cssText=`left:${cx}px;top:${cy}px;width:${sz}px;height:${sz}px;`+
+        `background-image:url(${def.photo});background-size:${objW}px ${objH}px;`+
+        `background-position:${-(col*cellW)}px ${-(row*cellH)}px;`+
+        `clip-path:${clip};box-shadow:0 2px 6px rgba(0,0,0,.5);filter:brightness(.92)`;
+    } else {
+      const sz=(explosive?(10+Math.random()*16):(6+Math.random()*8));
+      const color=colors[Math.floor(Math.random()*colors.length)];
+      el.style.cssText=`left:${cx}px;top:${cy}px;width:${sz}px;height:${sz}px;background:${color};clip-path:${clip};box-shadow:0 2px 4px rgba(0,0,0,.4);`;
+    }
+
+    const angle=(i/count)*Math.PI*2+Math.random()*1.2;
+    const dist=(explosive?90:35)+Math.random()*(explosive?150:50);
+    const midDist=dist*0.35;
+    el.style.setProperty('--mx',Math.cos(angle)*midDist+'px');
+    el.style.setProperty('--my',Math.sin(angle)*midDist*0.6+'px');
+    el.style.setProperty('--ms',explosive?'1.2':'1');
+    el.style.setProperty('--ex',Math.cos(angle)*dist+'px');
+    el.style.setProperty('--ey',Math.sin(angle)*dist+(explosive?60:30)+'px');
+    el.style.setProperty('--er',(Math.random()-0.5)*600+'deg');
+    const dur=(explosive?0.9:0.55)+Math.random()*0.3;
+    el.style.setProperty('--dur',dur+'s');
+    el.style.animation=`piece-fly ${dur}s ease-out forwards`;
+    document.body.appendChild(el);
+    setTimeout(()=>el.remove(),dur*1000+100);
+  }
+}
+
+// ── Boom ──────────────────────────────────────────────────────────────────
+function spawnBoom(cx,cy,tool,big){
+  const el=document.createElement('div');
+  el.className='boom';
+  el.style.left=cx+'px'; el.style.top=cy+'px';
+  const r1=document.createElement('div'); r1.className='boom-ring';
+  r1.style.borderColor=tool.boomColor;
+  r1.style.animation=`ring-out ${big?0.6:0.4}s ease-out forwards`;
+  if(big){
+    const r2=document.createElement('div'); r2.className='boom-ring boom-ring2';
+    r2.style.borderColor=tool.boomColor;
+    el.appendChild(r2);
+  }
+  const flash=document.createElement('div'); flash.className='boom-flash';
+  flash.style.background=`radial-gradient(circle,rgba(255,240,120,0.95) 0%,${tool.boomColor}88 45%,transparent 70%)`;
+  if(big){
+    const word=document.createElement('div'); word.className='boom-word';
+    word.textContent=tool.word; word.style.color=tool.boomColor;
+    el.append(r1,flash,word);
+  } else {
+    el.append(r1,flash);
+  }
+  document.body.appendChild(el);
+  setTimeout(()=>el.remove(),800);
+}
+
+// ── Score pop ─────────────────────────────────────────────────────────────
+function spawnScorePop(cx,cy,pts,color){
+  const el=document.createElement('div');
+  el.className='score-pop';
+  el.textContent='+'+pts;
+  el.style.color=color;
+  el.style.left=cx+'px';
+  el.style.setProperty('--y',cy+'px');
+  document.body.appendChild(el);
+  setTimeout(()=>el.remove(),1000);
+}
+function spawnHitNum(cx,cy,hp,maxhp){
+  const el=document.createElement('div');
+  el.className='hit-num';
+  el.textContent=hp>0?hp+' hp left':'destroyed!';
+  el.style.left=cx+'px';
+  el.style.setProperty('--y',(cy-30)+'px');
+  document.body.appendChild(el);
+  setTimeout(()=>el.remove(),700);
+}
+
+// ── Splat ─────────────────────────────────────────────────────────────────
+function spawnSplat(cx,cy,big){
+  const el=document.createElement('div');
+  el.className='splat';
+  const sz=(big?70:35)+Math.random()*30;
+  const cols=['#ff6b3544','#ffd60044','#ff174444','#ffffff18'];
+  el.style.cssText=`width:${sz}px;height:${sz}px;left:${cx-sz/2}px;top:${cy-sz/2}px;background:${cols[Math.floor(Math.random()*cols.length)]}`;
+  room.appendChild(el);
+  requestAnimationFrame(()=>el.classList.add('show'));
+}
+
+// ── Combo / Rage ──────────────────────────────────────────────────────────
+function showComboBanner(){
+  const b=document.getElementById('combo-banner');
+  const msgs={3:'Triple!',4:'Quad!!',5:'UNSTOPPABLE!!',6:'DESTROYER!!!',7:'GODLIKE!!!!',8:'OMEGA!!!!!',9:'TRANSCENDENT!!!!!',10:'LEGEND!!!!!'};
+  b.textContent=msgs[combo]||'COMBO x'+combo+'!';
+  b.classList.remove('pop'); void b.offsetWidth; b.classList.add('pop');
+}
+function triggerShake(){
+  room.classList.remove('shake'); void room.offsetWidth; room.classList.add('shake');
+}
+function triggerRageBurst(){
+  playRage(); triggerShake(); rage=0;
+  const f=document.createElement('div');
+  f.style.cssText='position:fixed;inset:0;background:rgba(255,30,0,0.22);z-index:300;pointer-events:none';
+  f.style.animation='flash-out .5s ease-out forwards';
+  document.body.appendChild(f);
+  setTimeout(()=>f.remove(),600);
+}
+function updateHUD(){
+  document.getElementById('score-val').textContent=score.toLocaleString();
+  document.getElementById('smashed-val').textContent=smashed;
+  const cv=document.getElementById('combo-val');
+  cv.textContent='x'+combo;
+  cv.style.color=combo>=7?'#ffd600':combo>=5?'#ff6b35':combo>=3?'#ff8a65':'#fff';
+  const pct=Math.round(rage);
+  document.getElementById('rage-fill').style.width=pct+'%';
+  document.getElementById('rage-text').textContent=pct+'%';
+}
+
+// ── Toolbar ───────────────────────────────────────────────────────────────
+document.querySelectorAll('.tbtn[data-tool]').forEach(btn=>{
+  btn.addEventListener('click',()=>{
+    document.querySelectorAll('.tbtn[data-tool]').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active'); currentTool=btn.dataset.tool;
+  });
+});
+document.getElementById('spawn-btn').addEventListener('click',()=>{
+  spawnBatch(5,true);
+});
+document.getElementById('mute-btn').addEventListener('click',()=>{
+  muted=!muted;
+  document.getElementById('mute-btn').textContent=muted?'🔇':'🔊';
+});
+room.addEventListener('click',e=>{
+  if(!e.target.closest('.obj')){
+    playAmbientTap();
+    spawnBoom(e.clientX,e.clientY,TOOLS[currentTool],false);
+    spawnSplat(e.clientX,e.clientY,false);
+  }
+});
+
+// Rage decay
+setInterval(()=>{rage=Math.max(0,rage-0.3);updateHUD();},200);
+
+// Initial spawn
+const initCount = window.innerWidth < 600 ? 5 : window.innerWidth < 900 ? 6 : 8;
+spawnBatch(initCount,false);
+
+// Reposition objects safely on resize/orientation change so nothing is stranded off-screen
+let resizeTimer;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    const W = window.innerWidth, H = window.innerHeight;
+    const topClear = getTopClearance(), botClear = getBottomClearance();
+    document.querySelectorAll('.obj').forEach(el => {
+      const w = el.offsetWidth;
+      let x = parseFloat(el.style.left), y = parseFloat(el.style.top);
+      x = Math.min(Math.max(10, x), Math.max(10, W - w - 10));
+      y = Math.min(Math.max(topClear, y), Math.max(topClear, H - w - botClear));
+      el.style.left = x + 'px';
+      el.style.top = y + 'px';
+    });
+  }, 200);
+});
+</script>
+</body>
+</html>
