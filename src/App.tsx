@@ -23,6 +23,7 @@ type ObjectDefinition = {
   height: number;
   material: Material;
   shards: string[];
+  explosive?: boolean;
 };
 
 type RoomObject = ObjectDefinition & {
@@ -40,6 +41,7 @@ type ImpactEffect = {
   color: string;
   word: string;
   big?: boolean;
+  blast?: boolean;
 };
 
 type NumberEffect = {
@@ -76,6 +78,7 @@ const OBJECT_LIBRARY: ObjectDefinition[] = [
   { type: 'crystal', label: 'crystal', hp: 2, points: 65, width: 100, height: 120, material: 'glass', shards: ['#ffb4b2', '#d8468e', '#ffffff'] },
   { type: 'rock', label: 'rock', hp: 6, points: 20, width: 120, height: 100, material: 'stone', shards: ['#8a8378', '#5c574e', '#3a372f'] },
   { type: 'phone', label: 'phone', hp: 3, points: 50, width: 70, height: 130, material: 'electronic', shards: ['#1c1c1e', '#3a3a3c', '#0a84ff'] },
+  { type: 'barrel', label: 'explosive barrel', hp: 3, points: 40, width: 100, height: 130, material: 'metal', shards: ['#ff5a1f', '#ffd23f', '#3a1410'], explosive: true },
 ];
 
 type ToolConfig = {
@@ -96,6 +99,12 @@ const TOOL_CONFIG: Record<ToolName, ToolConfig> = {
   bat: { multiplier: 1.25, damage: 1, cooldown: 0, strong: ['glass', 'electronic'], strongLabel: 'glass · tech', color: '#51d9e8', word: 'CRACK!', icon: Zap },
   axe: { multiplier: 1.6, damage: 1, cooldown: 450, strong: ['wood'], strongLabel: 'wood · slow', color: '#ff3d61', word: 'DESTROY!', icon: Axe },
 };
+
+// Barrels damage everything within this many pixels of their centre when they
+// break; a blast that breaks another barrel sets it off after a short fuse.
+const BLAST_RADIUS = 240;
+const BLAST_DAMAGE = 3;
+const BLAST_FUSE = 160;
 
 const RAGE_DURATION = 6000;
 const RAGE_DRAIN_DELAY = 1500;
@@ -128,12 +137,13 @@ const INITIAL_PLACEMENTS = [
   { key: 'trophy', x: 31, y: 52 },
   { key: 'laptop', x: 56, y: 56 },
   { key: 'chair', x: 8, y: 55 },
+  { key: 'barrel', x: 44, y: 50 },
 ];
 
 const PARTS_BY_TYPE: Record<string, number> = {
   vase: 3, mug: 3, tv: 3, laptop: 4, phone: 3, window: 5,
   guitar: 4, chair: 4, painting: 2, trophy: 3, lamp: 3, clock: 4,
-  crystal: 2, rock: 2,
+  crystal: 2, rock: 2, barrel: 5,
 };
 
 let nextId = 100;
@@ -217,7 +227,43 @@ function useImpactAudio(muted: boolean) {
     }
   }, [context]);
 
-  return play;
+  // A low sine thump under a long burst of low-passed noise.
+  const boom = useCallback(() => {
+    const audio = context();
+    if (!audio) return;
+    const now = audio.currentTime;
+    const thump = audio.createOscillator();
+    const thumpGain = audio.createGain();
+    thump.type = 'sine';
+    thump.frequency.setValueAtTime(110, now);
+    thump.frequency.exponentialRampToValueAtTime(28, now + .6);
+    thumpGain.gain.setValueAtTime(.35, now);
+    thumpGain.gain.exponentialRampToValueAtTime(.001, now + .7);
+    thump.connect(thumpGain);
+    thumpGain.connect(audio.destination);
+    thump.start(now);
+    thump.stop(now + .72);
+
+    const noise = audio.createBufferSource();
+    const buffer = audio.createBuffer(1, audio.sampleRate * .8, audio.sampleRate);
+    const channel = buffer.getChannelData(0);
+    for (let i = 0; i < channel.length; i += 1) channel[i] = (Math.random() * 2 - 1) * (1 - i / channel.length) ** 2;
+    noise.buffer = buffer;
+    const filter = audio.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(2400, now);
+    filter.frequency.exponentialRampToValueAtTime(180, now + .8);
+    const noiseGain = audio.createGain();
+    noiseGain.gain.setValueAtTime(.3, now);
+    noiseGain.gain.exponentialRampToValueAtTime(.001, now + .8);
+    noise.connect(filter);
+    filter.connect(noiseGain);
+    noiseGain.connect(audio.destination);
+    noise.start(now);
+    noise.stop(now + .82);
+  }, [context]);
+
+  return { play, boom };
 }
 
 function ObjectArt({ object }: { object: RoomObject }) {
@@ -237,7 +283,7 @@ function App() {
   const [combo, setCombo] = useState(1);
   const [rage, setRage] = useState(0);
   const [muted, setMuted] = useState(false);
-  const [shaking, setShaking] = useState(false);
+  const [shake, setShake] = useState<'' | 'soft' | 'hard'>('');
   const [banner, setBanner] = useState('');
   const [bannerKey, setBannerKey] = useState(0);
   const [impacts, setImpacts] = useState<ImpactEffect[]>([]);
@@ -252,12 +298,19 @@ function App() {
   const [newBest, setNewBest] = useState(false);
   const comboTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const shakeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const respawnTimers = useRef(new Set<ReturnType<typeof setTimeout>>());
+  const pendingTimers = useRef(new Set<ReturnType<typeof setTimeout>>());
   const cooldownUntil = useRef(0);
   const lastHitAt = useRef(0);
   const rageEndsAt = useRef(0);
   const challengeEndsAt = useRef(0);
-  const playSound = useImpactAudio(muted);
+  const { play: playSound, boom } = useImpactAudio(muted);
+  // Blasts resolve on timers after the click that caused them, so they read the
+  // latest objects and combo through refs rather than a stale render closure.
+  const objectsRef = useRef(objects);
+  objectsRef.current = objects;
+  const comboRef = useRef(combo);
+  comboRef.current = combo;
+  const strikeRef = useRef<(objectId: number, damage: number, centerX: number, centerY: number, source: 'tool' | 'blast') => boolean>(() => false);
 
   const currentTool = TOOL_CONFIG[tool];
   const objectCountText = useMemo(() => `${objects.length} ${objects.length === 1 ? 'target' : 'targets'} in room`, [objects.length]);
@@ -271,14 +324,14 @@ function App() {
     setBannerKey((value) => value + 1);
   }, []);
 
-  const addDebris = useCallback((object: RoomObject, centerX: number, centerY: number) => {
-    const pieces = Array.from({ length: object.material === 'glass' ? 12 : 8 }, (_, index) => ({
+  const addDebris = useCallback((object: RoomObject, centerX: number, centerY: number, count = object.material === 'glass' ? 12 : 8, spread = 1) => {
+    const pieces = Array.from({ length: count }, (_, index) => ({
       id: nextEffectId++,
       x: centerX + (Math.random() - .5) * 36,
       y: centerY + (Math.random() - .5) * 30,
       color: object.shards[index % object.shards.length],
-      dx: (Math.random() - .5) * 190,
-      dy: -40 - Math.random() * 150,
+      dx: (Math.random() - .5) * 190 * spread,
+      dy: (-40 - Math.random() * 150) * spread,
       rotation: -250 + Math.random() * 500,
       duration: 480 + Math.round(Math.random() * 320),
     }));
@@ -289,9 +342,9 @@ function App() {
     }, 900);
   }, []);
 
-  const addImpact = useCallback((x: number, y: number, color: string, word: string, big: boolean) => {
+  const addImpact = useCallback((x: number, y: number, color: string, word: string, big: boolean, blast = false) => {
     const id = nextEffectId++;
-    setImpacts((items) => [...items, { id, x, y, color, word, big }]);
+    setImpacts((items) => [...items, { id, x, y, color, word, big, blast }]);
     window.setTimeout(() => removeEffect(setImpacts, id), 760);
   }, [removeEffect]);
 
@@ -317,9 +370,10 @@ function App() {
 
   const resetGame = useCallback(() => {
     if (comboTimer.current) clearTimeout(comboTimer.current);
-    respawnTimers.current.forEach((timer) => clearTimeout(timer));
-    respawnTimers.current.clear();
+    pendingTimers.current.forEach((timer) => clearTimeout(timer));
+    pendingTimers.current.clear();
     cooldownUntil.current = 0;
+    comboRef.current = 1;
     setObjects(createInitialObjects());
     setScore(0);
     setSmashed(0);
@@ -349,10 +403,89 @@ function App() {
 
   const restart = mode === 'challenge' ? startChallenge : startFreePlay;
 
-  const handleObjectHit = useCallback((event: React.PointerEvent<HTMLDivElement>, objectId: number) => {
+  const triggerShake = useCallback((kind: 'soft' | 'hard') => {
+    setShake((current) => (current === 'hard' && kind === 'soft' ? current : kind));
+    if (shakeTimer.current) clearTimeout(shakeTimer.current);
+    shakeTimer.current = setTimeout(() => setShake(''), kind === 'hard' ? 520 : 300);
+  }, []);
+
+  const later = (callback: () => void, delay: number) => {
+    const timer = setTimeout(() => {
+      pendingTimers.current.delete(timer);
+      callback();
+    }, delay);
+    pendingTimers.current.add(timer);
+  };
+
+  const detonate = (barrel: RoomObject, centerX: number, centerY: number) => {
+    boom();
+    addImpact(centerX, centerY, '#ffa31a', 'KABOOM!', true, true);
+    addDebris(barrel, centerX, centerY, 26, 2.2);
+    triggerShake('hard');
+    if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate([60, 30, 90]);
+    later(() => {
+      document.querySelectorAll<HTMLElement>('[data-object-id]').forEach((element) => {
+        const id = Number(element.dataset.objectId);
+        if (id === barrel.id) return;
+        const rect = element.getBoundingClientRect();
+        const x = rect.left + rect.width / 2;
+        const y = rect.top + rect.height / 2;
+        if (Math.hypot(x - centerX, y - centerY) > BLAST_RADIUS) return;
+        strikeRef.current(id, BLAST_DAMAGE, x, y, 'blast');
+      });
+    }, BLAST_FUSE);
+  };
+
+  // Applies damage to one object and handles everything that follows from it:
+  // scoring, combo, rage, debris, respawn, and setting off barrels.
+  const strike = (objectId: number, damage: number, centerX: number, centerY: number, source: 'tool' | 'blast') => {
+    const object = objectsRef.current.find((item) => item.id === objectId);
+    if (!object || object.destroying) return false;
+    const dealt = rageMode ? object.currentHp : damage;
+    const remainingHp = Math.max(0, object.currentHp - dealt);
+    const destroyed = remainingHp === 0;
+    const nextCombo = destroyed ? Math.min(comboRef.current + 1, 12) : comboRef.current;
+    const multiplier = source === 'tool' ? currentTool.multiplier : 1;
+    const gained = Math.round(object.points * multiplier * nextCombo * (rageMode ? 2 : 1));
+
+    const update = (item: RoomObject) => item.id === objectId ? { ...item, currentHp: remainingHp, destroying: destroyed } : item;
+    objectsRef.current = objectsRef.current.map(update);
+    setObjects((items) => items.map(update));
+
+    addNumber(centerX, centerY - 4, destroyed ? `+${gained}` : `-${dealt}`, destroyed ? 'score' : 'damage');
+    if (source === 'blast') {
+      playSound(object.material, destroyed, 'hammer');
+      if (!object.explosive) addImpact(centerX, centerY, '#ffa31a', destroyed ? 'BLAST!' : 'SCORCHED!', destroyed);
+    }
+    if (!rageMode) setRage((value) => Math.min(100, value + (destroyed ? 10 : 3)));
+    if (!destroyed) return false;
+
+    setScore((value) => value + gained);
+    setSmashed((value) => value + 1);
+    addDebris(object, centerX, centerY);
+    if (nextCombo >= 3 && nextCombo % 2 === 1 && !rageMode && !object.explosive) {
+      showBanner(nextCombo >= 7 ? 'UNHINGED' : nextCombo >= 5 ? 'ON A ROLL' : 'KEEP GOING');
+    }
+    comboRef.current = nextCombo;
+    setCombo(nextCombo);
+    if (comboTimer.current) clearTimeout(comboTimer.current);
+    comboTimer.current = setTimeout(() => {
+      comboRef.current = 1;
+      setCombo(1);
+    }, 1650);
+    later(() => {
+      setObjects((items) => items.filter((item) => item.id !== objectId));
+      spawnStuff(1);
+    }, 280);
+    if (object.explosive) detonate(object, centerX, centerY);
+    return true;
+  };
+  strikeRef.current = strike;
+
+  const handleObjectHit = (event: React.PointerEvent<HTMLDivElement>, objectId: number) => {
     event.preventDefault();
     if (gameOver) return;
-    const object = objects.find((item) => item.id === objectId);
+    const object = objectsRef.current.find((item) => item.id === objectId);
     if (!object || object.destroying) return;
     const now = performance.now();
     if (!rageMode && now < cooldownUntil.current) return;
@@ -361,12 +494,6 @@ function App() {
     const centerX = rect.left + rect.width / 2;
     const centerY = rect.top + rect.height / 2;
     const strong = currentTool.strong.includes(object.material);
-    const damage = rageMode ? object.currentHp : currentTool.damage * (strong ? 2 : 1);
-    const remainingHp = object.currentHp - damage;
-    const destroyed = remainingHp <= 0;
-    const nextCombo = destroyed ? Math.min(combo + 1, 12) : combo;
-    const gained = Math.round(object.points * currentTool.multiplier * nextCombo * (rageMode ? 2 : 1));
-    const impactWord = destroyed ? (rageMode ? 'OBLITERATED!' : currentTool.word) : strong ? 'CRITICAL!' : 'HIT!';
 
     lastHitAt.current = now;
     if (!rageMode && currentTool.cooldown > 0) {
@@ -374,45 +501,24 @@ function App() {
       setCooldownKey((value) => value + 1);
     }
 
-    playSound(object.material, destroyed, tool);
-    addImpact(centerX, centerY, rageMode ? '#ff2a2a' : currentTool.color, impactWord, destroyed || strong);
-    addNumber(centerX, centerY - 4, destroyed ? `+${gained}` : `-${damage}`, destroyed ? 'score' : 'damage');
-    if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate(destroyed ? 35 : 15);
-    setShaking(true);
-    if (shakeTimer.current) clearTimeout(shakeTimer.current);
-    shakeTimer.current = setTimeout(() => setShaking(false), 300);
-
-    if (!rageMode) {
-      const nextRage = Math.min(100, rage + (destroyed ? 10 : 3));
-      setRage(nextRage);
-      if (nextRage >= 100) {
-        setRageMode(true);
-        rageEndsAt.current = now + RAGE_DURATION;
-        showBanner('RAGE MODE');
-      }
+    const destroyed = strike(objectId, currentTool.damage * (strong ? 2 : 1), centerX, centerY, 'tool');
+    // A barrel's own detonation supplies the sound, impact and shake.
+    if (!(destroyed && object.explosive)) {
+      const impactWord = destroyed ? (rageMode ? 'OBLITERATED!' : currentTool.word) : strong ? 'CRITICAL!' : 'HIT!';
+      playSound(object.material, destroyed, tool);
+      addImpact(centerX, centerY, rageMode ? '#ff2a2a' : currentTool.color, impactWord, destroyed || strong);
+      if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate(destroyed ? 35 : 15);
+      triggerShake('soft');
     }
+  };
 
-    if (destroyed) {
-      setObjects((items) => items.map((item) => item.id === objectId ? { ...item, currentHp: 0, destroying: true } : item));
-      setScore((value) => value + gained);
-      setSmashed((value) => value + 1);
-      addDebris(object, centerX, centerY);
-      if (nextCombo >= 3 && nextCombo % 2 === 1 && !rageMode) {
-        showBanner(nextCombo >= 7 ? 'UNHINGED' : nextCombo >= 5 ? 'ON A ROLL' : 'KEEP GOING');
-      }
-      setCombo(nextCombo);
-      if (comboTimer.current) clearTimeout(comboTimer.current);
-      comboTimer.current = setTimeout(() => setCombo(1), 1650);
-      const respawn = setTimeout(() => {
-        respawnTimers.current.delete(respawn);
-        setObjects((items) => items.filter((item) => item.id !== objectId));
-        spawnStuff(1);
-      }, 280);
-      respawnTimers.current.add(respawn);
-    } else {
-      setObjects((items) => items.map((item) => item.id === objectId ? { ...item, currentHp: remainingHp } : item));
-    }
-  }, [addDebris, addImpact, addNumber, combo, currentTool, gameOver, objects, playSound, rage, rageMode, showBanner, spawnStuff, tool]);
+  // Rage mode kicks in whenever the meter fills, whether from tools or blasts.
+  useEffect(() => {
+    if (rageMode || rage < 100) return;
+    setRageMode(true);
+    rageEndsAt.current = performance.now() + RAGE_DURATION;
+    showBanner('RAGE MODE');
+  }, [rage, rageMode, showBanner]);
 
   // One ticker drives the rage countdown, idle rage drain, and the challenge clock.
   useEffect(() => {
@@ -436,6 +542,9 @@ function App() {
         if (remaining === 0) {
           setGameOver(true);
           setRageMode(false);
+          // Stop any chain reaction still in flight from scoring after time's up.
+          pendingTimers.current.forEach((timer) => clearTimeout(timer));
+          pendingTimers.current.clear();
         }
       }
     }, 100);
@@ -465,7 +574,7 @@ function App() {
   useEffect(() => () => {
     if (comboTimer.current) clearTimeout(comboTimer.current);
     if (shakeTimer.current) clearTimeout(shakeTimer.current);
-    respawnTimers.current.forEach((timer) => clearTimeout(timer));
+    pendingTimers.current.forEach((timer) => clearTimeout(timer));
   }, []);
 
   return (
@@ -529,11 +638,12 @@ function App() {
         </div>
       </section>
 
-      <section className={`arena ${shaking ? 'shake' : ''}`} aria-label="Breakable objects arena">
+      <section className={`arena ${shake === 'hard' ? 'shake-hard' : shake ? 'shake' : ''}`} aria-label="Breakable objects arena">
         {objects.map((object) => (
           <div
             key={object.id}
-            className={`object ${object.destroying ? 'dying' : ''}`}
+            className={`object ${object.destroying ? 'dying' : ''} ${object.explosive ? 'explosive' : ''}`}
+            data-object-id={object.id}
             style={{
               left: `${object.x}%`,
               top: `${object.y}%`,
@@ -565,7 +675,7 @@ function App() {
       </section>
 
       {impacts.map((impact) => (
-        <div key={impact.id} className="impact" style={{ left: impact.x, top: impact.y, '--impact': impact.color } as React.CSSProperties} aria-hidden="true">
+        <div key={impact.id} className={`impact ${impact.blast ? 'blast' : ''}`} style={{ left: impact.x, top: impact.y, '--impact': impact.color } as React.CSSProperties} aria-hidden="true">
           <span className="impact-flare" />
           <span className="impact-ring" />
           <span className="impact-ring second" />

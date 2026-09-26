@@ -224,6 +224,15 @@ button, [role='button'] { -webkit-tap-highlight-color: transparent; }
   cursor: crosshair;
 }
 .arena.shake { animation: room-shake .28s ease-out; }
+.arena.shake-hard { animation: room-shake-hard .5s ease-out; }
+@keyframes room-shake-hard {
+  0%,100% { transform: translate(0); }
+  10% { transform: translate(-14px, 9px) rotate(-.6deg); }
+  25% { transform: translate(12px, -10px) rotate(.5deg); }
+  40% { transform: translate(-10px, 7px); }
+  60% { transform: translate(7px, -5px); }
+  80% { transform: translate(-3px, 2px); }
+}
 @keyframes room-shake {
   0%,100% { transform: translate(0); }
   17% { transform: translate(-5px, 3px); }
@@ -321,6 +330,15 @@ button, [role='button'] { -webkit-tap-highlight-color: transparent; }
 .type-crystal .p2 { width: 26%; height: 30%; left: 38%; top: 14%; clip-path: polygon(50% 0,100% 40%,70% 100%,30% 100%,0 40%); background: rgba(255,255,255,.42); }
 .type-rock .p1 { width: 82%; height: 70%; left: 9%; top: 18%; clip-path: polygon(12% 20%,42% 0,82% 10%,100% 58%,75% 100%,24% 94%,0 58%); background: linear-gradient(145deg,#aaa093,#4e4841); box-shadow: inset -12px -10px 18px rgba(0,0,0,.4), inset 7px 5px 12px rgba(255,255,255,.16); }
 .type-rock .p2 { width: 24%; height: 14%; left: 33%; top: 24%; background: rgba(255,255,255,.13); transform: rotate(-20deg); }
+.type-barrel .p1 { width: 78%; height: 86%; left: 11%; top: 9%; border-radius: 12% / 7%; background: linear-gradient(90deg,#5c100c,#c42d22 30%,#ff6a4a 46%,#b3261c 64%,#420b08); box-shadow: inset 0 -6px 10px rgba(0,0,0,.35); }
+.type-barrel .p2,.type-barrel .p3 { width: 80%; height: 5%; left: 10%; background: linear-gradient(90deg,#2a0806,#6e1812 45%,#2a0806); }
+.type-barrel .p2 { top: 27%; } .type-barrel .p3 { top: 74%; }
+.type-barrel .p4 { width: 36%; height: 28%; left: 32%; top: 40%; clip-path: polygon(50% 0,100% 100%,0 100%); background: #ffd23f; }
+.type-barrel .p4::after { content: '!'; position: absolute; left: 0; right: 0; bottom: 4%; color: #1d100a; font-family: var(--app-font-sans); font-size: clamp(12px, 1.4vw, 20px); font-weight: 900; text-align: center; }
+.type-barrel .p5 { width: 78%; height: 12%; left: 11%; top: 3%; border-radius: 50%; background: radial-gradient(ellipse at 50% 40%,#a8231a,#5c100c 70%); box-shadow: inset 0 0 0 2px #2a0806; }
+.object.explosive:not(.dying) { animation: object-in .4s cubic-bezier(.18,1.4,.38,1) both, barrel-glow 1.4s ease-in-out .4s infinite alternate; }
+@keyframes barrel-glow { from { filter: drop-shadow(0 16px 12px rgba(0,0,0,.55)); } to { filter: drop-shadow(0 16px 12px rgba(0,0,0,.55)) drop-shadow(0 0 14px rgba(255,90,31,.55)); } }
+.object.explosive .object-label { color: rgba(255,150,90,.75); }
 
 .debris {
   position: fixed;
@@ -345,6 +363,11 @@ button, [role='button'] { -webkit-tap-highlight-color: transparent; }
 .impact-ring.second { animation-delay: .07s; }
 .impact-flare { position: absolute; width: 54px; height: 54px; border-radius: 50%; background: var(--impact); opacity: .5; transform: translate(-50%,-50%); animation: flare-out .3s ease-out forwards; filter: blur(7px); }
 @keyframes ring-out { to { width: 170px; height: 170px; opacity: 0; } }
+/* Barrel blasts: a wider ring that roughly traces the blast radius, and a hotter flash. */
+.impact.blast .impact-ring { border-width: 4px; animation-name: ring-out-blast; animation-duration: .5s; }
+.impact.blast .impact-flare { width: 120px; height: 120px; opacity: .85; background: radial-gradient(circle, #fff4c2, var(--impact) 45%, #ff3b1a); animation-duration: .45s; }
+.impact.blast .impact-word { font-size: 44px; }
+@keyframes ring-out-blast { to { width: 480px; height: 480px; opacity: 0; } }
 @keyframes flare-out { 0% { transform: translate(-50%,-50%) scale(.1); opacity: .7; } 45% { opacity: .45; } 100% { transform: translate(-50%,-50%) scale(2.2); opacity: 0; } }
 .impact-word {
   position: absolute;
