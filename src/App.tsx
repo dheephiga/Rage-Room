@@ -5,6 +5,7 @@ import {
   Plus,
   RotateCcw,
   Sparkles,
+  Timer,
   Volume2,
   VolumeX,
   Zap,
@@ -77,11 +78,47 @@ const OBJECT_LIBRARY: ObjectDefinition[] = [
   { type: 'phone', label: 'phone', hp: 3, points: 50, width: 70, height: 130, material: 'electronic', shards: ['#1c1c1e', '#3a3a3c', '#0a84ff'] },
 ];
 
-const TOOL_CONFIG: Record<ToolName, { multiplier: number; damage: number; color: string; word: string; icon: typeof Hammer }> = {
-  hammer: { multiplier: 1, damage: 1, color: '#ff7139', word: 'SMASH!', icon: Hammer },
-  bat: { multiplier: 1.5, damage: 1, color: '#51d9e8', word: 'CRACK!', icon: Zap },
-  axe: { multiplier: 2.5, damage: 2, color: '#ff3d61', word: 'DESTROY!', icon: Axe },
+type ToolConfig = {
+  multiplier: number;
+  damage: number;
+  cooldown: number;
+  strong: Material[];
+  strongLabel: string;
+  color: string;
+  word: string;
+  icon: typeof Hammer;
 };
+
+// Each tool does double damage to the materials it is strong against, so the
+// best tool depends on the target. The axe scores highest but needs a recovery beat.
+const TOOL_CONFIG: Record<ToolName, ToolConfig> = {
+  hammer: { multiplier: 1, damage: 1, cooldown: 0, strong: ['ceramic', 'stone', 'metal', 'ice'], strongLabel: 'clay · stone · metal', color: '#ff7139', word: 'SMASH!', icon: Hammer },
+  bat: { multiplier: 1.25, damage: 1, cooldown: 0, strong: ['glass', 'electronic'], strongLabel: 'glass · tech', color: '#51d9e8', word: 'CRACK!', icon: Zap },
+  axe: { multiplier: 1.6, damage: 1, cooldown: 450, strong: ['wood'], strongLabel: 'wood · slow', color: '#ff3d61', word: 'DESTROY!', icon: Axe },
+};
+
+const RAGE_DURATION = 6000;
+const RAGE_DRAIN_DELAY = 1500;
+const CHALLENGE_DURATION = 60000;
+const BEST_SCORE_KEY = 'rage-room-best';
+
+type GameMode = 'free' | 'challenge';
+
+function readBestScore() {
+  try {
+    return Number(window.localStorage.getItem(BEST_SCORE_KEY)) || 0;
+  } catch {
+    return 0;
+  }
+}
+
+function saveBestScore(value: number) {
+  try {
+    window.localStorage.setItem(BEST_SCORE_KEY, String(value));
+  } catch {
+    // Storage can be unavailable (private mode); the best score just won't persist.
+  }
+}
 
 const INITIAL_PLACEMENTS = [
   { key: 'tv', x: 16, y: 29 },
@@ -206,8 +243,20 @@ function App() {
   const [impacts, setImpacts] = useState<ImpactEffect[]>([]);
   const [numberEffects, setNumberEffects] = useState<NumberEffect[]>([]);
   const [debris, setDebris] = useState<DebrisEffect[]>([]);
+  const [rageMode, setRageMode] = useState(false);
+  const [cooldownKey, setCooldownKey] = useState(0);
+  const [mode, setMode] = useState<GameMode>('free');
+  const [timeLeft, setTimeLeft] = useState(CHALLENGE_DURATION);
+  const [gameOver, setGameOver] = useState(false);
+  const [bestScore, setBestScore] = useState(readBestScore);
+  const [newBest, setNewBest] = useState(false);
   const comboTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const shakeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const respawnTimers = useRef(new Set<ReturnType<typeof setTimeout>>());
+  const cooldownUntil = useRef(0);
+  const lastHitAt = useRef(0);
+  const rageEndsAt = useRef(0);
+  const challengeEndsAt = useRef(0);
   const playSound = useImpactAudio(muted);
 
   const currentTool = TOOL_CONFIG[tool];
@@ -215,6 +264,11 @@ function App() {
 
   const removeEffect = useCallback((setter: React.Dispatch<React.SetStateAction<ImpactEffect[]>>, id: number) => {
     setter((items) => items.filter((item) => item.id !== id));
+  }, []);
+
+  const showBanner = useCallback((text: string) => {
+    setBanner(text);
+    setBannerKey((value) => value + 1);
   }, []);
 
   const addDebris = useCallback((object: RoomObject, centerX: number, centerY: number) => {
@@ -235,11 +289,11 @@ function App() {
     }, 900);
   }, []);
 
-  const addImpact = useCallback((object: RoomObject, x: number, y: number, destroyed: boolean) => {
+  const addImpact = useCallback((x: number, y: number, color: string, word: string, big: boolean) => {
     const id = nextEffectId++;
-    setImpacts((items) => [...items, { id, x, y, color: currentTool.color, word: destroyed ? currentTool.word : 'HIT!' , big: destroyed }]);
+    setImpacts((items) => [...items, { id, x, y, color, word, big }]);
     window.setTimeout(() => removeEffect(setImpacts, id), 760);
-  }, [currentTool.color, currentTool.word, removeEffect]);
+  }, [removeEffect]);
 
   const addNumber = useCallback((x: number, y: number, value: string, kind: NumberEffect['kind']) => {
     const id = nextEffectId++;
@@ -263,65 +317,159 @@ function App() {
 
   const resetGame = useCallback(() => {
     if (comboTimer.current) clearTimeout(comboTimer.current);
+    respawnTimers.current.forEach((timer) => clearTimeout(timer));
+    respawnTimers.current.clear();
+    cooldownUntil.current = 0;
     setObjects(createInitialObjects());
     setScore(0);
     setSmashed(0);
     setCombo(1);
     setRage(0);
+    setRageMode(false);
     setImpacts([]);
     setNumberEffects([]);
     setDebris([]);
     setBanner('');
+    setGameOver(false);
+    setNewBest(false);
   }, []);
+
+  const startChallenge = useCallback(() => {
+    resetGame();
+    setMode('challenge');
+    challengeEndsAt.current = performance.now() + CHALLENGE_DURATION;
+    setTimeLeft(CHALLENGE_DURATION);
+    showBanner('60 SECONDS');
+  }, [resetGame, showBanner]);
+
+  const startFreePlay = useCallback(() => {
+    resetGame();
+    setMode('free');
+  }, [resetGame]);
+
+  const restart = mode === 'challenge' ? startChallenge : startFreePlay;
 
   const handleObjectHit = useCallback((event: React.PointerEvent<HTMLDivElement>, objectId: number) => {
     event.preventDefault();
+    if (gameOver) return;
     const object = objects.find((item) => item.id === objectId);
     if (!object || object.destroying) return;
+    const now = performance.now();
+    if (!rageMode && now < cooldownUntil.current) return;
+
     const rect = event.currentTarget.getBoundingClientRect();
     const centerX = rect.left + rect.width / 2;
     const centerY = rect.top + rect.height / 2;
-    const remainingHp = object.currentHp - currentTool.damage;
+    const strong = currentTool.strong.includes(object.material);
+    const damage = rageMode ? object.currentHp : currentTool.damage * (strong ? 2 : 1);
+    const remainingHp = object.currentHp - damage;
     const destroyed = remainingHp <= 0;
     const nextCombo = destroyed ? Math.min(combo + 1, 12) : combo;
+    const gained = Math.round(object.points * currentTool.multiplier * nextCombo * (rageMode ? 2 : 1));
+    const impactWord = destroyed ? (rageMode ? 'OBLITERATED!' : currentTool.word) : strong ? 'CRITICAL!' : 'HIT!';
+
+    lastHitAt.current = now;
+    if (!rageMode && currentTool.cooldown > 0) {
+      cooldownUntil.current = now + currentTool.cooldown;
+      setCooldownKey((value) => value + 1);
+    }
 
     playSound(object.material, destroyed, tool);
-    addImpact(object, centerX, centerY, destroyed);
-    addNumber(centerX, centerY - 4, destroyed ? `+${Math.round(object.points * currentTool.multiplier * nextCombo)}` : `-${currentTool.damage}`, destroyed ? 'score' : 'damage');
+    addImpact(centerX, centerY, rageMode ? '#ff2a2a' : currentTool.color, impactWord, destroyed || strong);
+    addNumber(centerX, centerY - 4, destroyed ? `+${gained}` : `-${damage}`, destroyed ? 'score' : 'damage');
+    if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate(destroyed ? 35 : 15);
     setShaking(true);
     if (shakeTimer.current) clearTimeout(shakeTimer.current);
     shakeTimer.current = setTimeout(() => setShaking(false), 300);
-    setRage((value) => Math.min(100, value + (destroyed ? 10 : 3)));
+
+    if (!rageMode) {
+      const nextRage = Math.min(100, rage + (destroyed ? 10 : 3));
+      setRage(nextRage);
+      if (nextRage >= 100) {
+        setRageMode(true);
+        rageEndsAt.current = now + RAGE_DURATION;
+        showBanner('RAGE MODE');
+      }
+    }
 
     if (destroyed) {
-      const gained = Math.round(object.points * currentTool.multiplier * nextCombo);
       setObjects((items) => items.map((item) => item.id === objectId ? { ...item, currentHp: 0, destroying: true } : item));
       setScore((value) => value + gained);
       setSmashed((value) => value + 1);
       addDebris(object, centerX, centerY);
-      if (nextCombo >= 3 && nextCombo % 2 === 1) {
-        setBanner(nextCombo >= 7 ? 'UNHINGED' : nextCombo >= 5 ? 'ON A ROLL' : 'KEEP GOING');
-        setBannerKey((value) => value + 1);
+      if (nextCombo >= 3 && nextCombo % 2 === 1 && !rageMode) {
+        showBanner(nextCombo >= 7 ? 'UNHINGED' : nextCombo >= 5 ? 'ON A ROLL' : 'KEEP GOING');
       }
       setCombo(nextCombo);
       if (comboTimer.current) clearTimeout(comboTimer.current);
       comboTimer.current = setTimeout(() => setCombo(1), 1650);
-      window.setTimeout(() => {
+      const respawn = setTimeout(() => {
+        respawnTimers.current.delete(respawn);
         setObjects((items) => items.filter((item) => item.id !== objectId));
         spawnStuff(1);
       }, 280);
+      respawnTimers.current.add(respawn);
     } else {
       setObjects((items) => items.map((item) => item.id === objectId ? { ...item, currentHp: remainingHp } : item));
     }
-  }, [addDebris, addImpact, addNumber, combo, currentTool, objects, playSound, spawnStuff, tool]);
+  }, [addDebris, addImpact, addNumber, combo, currentTool, gameOver, objects, playSound, rage, rageMode, showBanner, spawnStuff, tool]);
+
+  // One ticker drives the rage countdown, idle rage drain, and the challenge clock.
+  useEffect(() => {
+    const ticker = setInterval(() => {
+      const now = performance.now();
+      if (rageMode) {
+        const remaining = rageEndsAt.current - now;
+        if (remaining <= 0) {
+          setRageMode(false);
+          setRage(0);
+        } else {
+          setRage(Math.ceil((remaining / RAGE_DURATION) * 100));
+        }
+      } else if (now - lastHitAt.current > RAGE_DRAIN_DELAY) {
+        setRage((value) => Math.max(0, value - 1));
+      }
+
+      if (mode === 'challenge' && !gameOver) {
+        const remaining = Math.max(0, challengeEndsAt.current - now);
+        setTimeLeft(remaining);
+        if (remaining === 0) {
+          setGameOver(true);
+          setRageMode(false);
+        }
+      }
+    }, 100);
+    return () => clearInterval(ticker);
+  }, [gameOver, mode, rageMode]);
+
+  // Record a new best once the challenge ends.
+  useEffect(() => {
+    if (!gameOver || score <= bestScore) return;
+    setBestScore(score);
+    setNewBest(true);
+    saveBestScore(score);
+  }, [bestScore, gameOver, score]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      if (event.key === '1') setTool('hammer');
+      else if (event.key === '2') setTool('bat');
+      else if (event.key === '3') setTool('axe');
+      else if (event.key === 'r' || event.key === 'R') restart();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [restart]);
 
   useEffect(() => () => {
     if (comboTimer.current) clearTimeout(comboTimer.current);
     if (shakeTimer.current) clearTimeout(shakeTimer.current);
+    respawnTimers.current.forEach((timer) => clearTimeout(timer));
   }, []);
 
   return (
-    <main className="rage-room">
+    <main className={`rage-room ${rageMode ? 'raging' : ''}`}>
       <div className="room-backdrop" aria-hidden="true">
         <span className="wall-scar scar-one" />
         <span className="wall-scar scar-two" />
@@ -335,17 +483,28 @@ function App() {
             <div className="brand-kicker">controlled destruction / session 01</div>
           </div>
         </div>
-        <button
-          type="button"
-          className="mute-control"
-          onClick={() => setMuted((value) => !value)}
-          aria-label={muted ? 'Turn sound on' : 'Mute sound'}
-          aria-pressed={muted}
-          data-testid="button-toggle-sound"
-        >
-          {muted ? <VolumeX size={16} /> : <Volume2 size={16} />}
-          <span className="mute-label">{muted ? 'Sound off' : 'Sound on'}</span>
-        </button>
+        <div className="top-controls">
+          <button
+            type="button"
+            className="mute-control"
+            onClick={mode === 'challenge' ? startFreePlay : startChallenge}
+            data-testid="button-toggle-mode"
+          >
+            {mode === 'challenge' ? <Sparkles size={16} /> : <Timer size={16} />}
+            <span className="mute-label">{mode === 'challenge' ? 'Free play' : '60s challenge'}</span>
+          </button>
+          <button
+            type="button"
+            className="mute-control"
+            onClick={() => setMuted((value) => !value)}
+            aria-label={muted ? 'Turn sound on' : 'Mute sound'}
+            aria-pressed={muted}
+            data-testid="button-toggle-sound"
+          >
+            {muted ? <VolumeX size={16} /> : <Volume2 size={16} />}
+            <span className="mute-label">{muted ? 'Sound off' : 'Sound on'}</span>
+          </button>
+        </div>
       </header>
 
       <section className="hud-strip" aria-label="Game statistics">
@@ -353,10 +512,17 @@ function App() {
           <span className="hud-label">Score</span>
           <strong className="hud-value hot" data-testid="text-score">{score.toLocaleString()}</strong>
         </div>
-        <div className="hud-cell">
-          <span className="hud-label">Smashed</span>
-          <strong className="hud-value" data-testid="text-smashed">{smashed}</strong>
-        </div>
+        {mode === 'challenge' ? (
+          <div className="hud-cell">
+            <span className="hud-label">Time</span>
+            <strong className={`hud-value ${timeLeft <= 10000 ? 'urgent' : ''}`} data-testid="text-time">{Math.ceil(timeLeft / 1000)}s</strong>
+          </div>
+        ) : (
+          <div className="hud-cell">
+            <span className="hud-label">Smashed</span>
+            <strong className="hud-value" data-testid="text-smashed">{smashed}</strong>
+          </div>
+        )}
         <div className="hud-cell">
           <span className="hud-label">Combo</span>
           <strong className="hud-value hot" data-testid="text-combo">x{combo}</strong>
@@ -393,7 +559,7 @@ function App() {
             <div className="object-hp" aria-label={`${object.currentHp} hits remaining`}>
               <div className="object-hp-fill" style={{ width: `${Math.max(0, object.currentHp / object.hp) * 100}%` }} />
             </div>
-            <span className="object-label">{object.label}</span>
+            <span className={`object-label ${currentTool.strong.includes(object.material) ? 'weak' : ''}`}>{object.label}</span>
           </div>
         ))}
       </section>
@@ -426,19 +592,21 @@ function App() {
         />
       ))}
 
-      <div className="combo-banner" key={bannerKey} data-testid="status-combo-banner">{banner}</div>
+      <div className={`combo-banner ${banner ? 'pop' : ''}`} key={bannerKey} data-testid="status-combo-banner">{banner}</div>
 
       <aside className="rage-panel" aria-label="Rage meter">
         <div className="rage-head">
-          <span className="rage-title">Rage meter</span>
+          <span className="rage-title">{rageMode ? 'Rage mode' : 'Rage meter'}</span>
           <span className="rage-percent" data-testid="text-rage">{rage}%</span>
         </div>
         <div className="rage-track"><div className="rage-fill" style={{ width: `${rage}%` }} /></div>
-        <div className="rage-hint">{rage >= 80 ? 'pressure release imminent' : 'break things to build pressure'}</div>
+        <div className="rage-hint">
+          {rageMode ? 'one-hit kills · double points' : rage >= 80 ? 'pressure release imminent' : 'break things to build pressure'}
+        </div>
       </aside>
 
       <nav className="tool-dock" aria-label="Destruction tools">
-        {(Object.keys(TOOL_CONFIG) as ToolName[]).map((toolName) => {
+        {(Object.keys(TOOL_CONFIG) as ToolName[]).map((toolName, index) => {
           const config = TOOL_CONFIG[toolName];
           const Icon = config.icon;
           return (
@@ -448,10 +616,22 @@ function App() {
               className={`tool-button ${tool === toolName ? 'active' : ''}`}
               onClick={() => setTool(toolName)}
               aria-pressed={tool === toolName}
+              title={`${toolName} (${index + 1}) — strong vs ${config.strongLabel}`}
               data-testid={`button-tool-${toolName}`}
             >
               <span className="tool-icon"><Icon size={15} /></span>
-              <span>{toolName}</span>
+              <span className="tool-text">
+                <span>{toolName}</span>
+                <span className="tool-meta">{config.strongLabel}</span>
+              </span>
+              {config.cooldown > 0 && tool === toolName && cooldownKey > 0 && !rageMode && (
+                <span
+                  key={cooldownKey}
+                  className="tool-cooldown"
+                  style={{ '--cooldown': `${config.cooldown}ms` } as React.CSSProperties}
+                  aria-hidden="true"
+                />
+              )}
             </button>
           );
         })}
@@ -463,14 +643,36 @@ function App() {
 
       <div className="instruction" aria-live="polite">
         <strong><Sparkles size={11} /> {objectCountText}</strong>
-        click targets to impact<br />
-        chain hits for higher scores
+        match tool to material<br />
+        fill rage for rage mode
       </div>
 
-      <button type="button" className="reset-control" onClick={resetGame} data-testid="button-reset" style={{ position: 'fixed', right: 25, bottom: 25, zIndex: 46 }}>
+      <button type="button" className="reset-control" onClick={restart} data-testid="button-reset" style={{ position: 'fixed', right: 25, bottom: 25, zIndex: 46 }}>
         <RotateCcw size={14} />
         Reset room
       </button>
+
+      {gameOver && (
+        <div className="game-over" role="dialog" aria-modal="true" aria-labelledby="game-over-title">
+          <div className="game-over-card">
+            <div className="game-over-kicker">time's up</div>
+            <h2 id="game-over-title" className="game-over-score" data-testid="text-final-score">{score.toLocaleString()}</h2>
+            {newBest && <div className="game-over-best-tag">New best</div>}
+            <dl className="game-over-stats">
+              <div><dt>Smashed</dt><dd>{smashed}</dd></div>
+              <div><dt>Best</dt><dd>{bestScore.toLocaleString()}</dd></div>
+            </dl>
+            <div className="game-over-actions">
+              <button type="button" className="tool-button active" onClick={startChallenge} data-testid="button-play-again" autoFocus>
+                <RotateCcw size={14} /> Play again
+              </button>
+              <button type="button" className="spawn-button" onClick={startFreePlay} data-testid="button-free-play">
+                <Sparkles size={14} /> Free play
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
